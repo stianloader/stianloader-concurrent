@@ -23,7 +23,9 @@ This library is licensed under the MIT License.
 
 ## Maven
 
-The library is still pretty much in early development so it still is not published on a maven repository.
+The library is still pretty much in early development but it can be found under the `https://stianloader.org/maven` repository
+as `org.stianloader:stianloader-concurrent:<version>` the available versions are listed under
+https://stianloader.org/maven/org/stianloader/stianloader-concurrent/
 
 ## Dependencies
 

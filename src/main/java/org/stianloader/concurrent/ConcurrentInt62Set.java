@@ -204,7 +204,7 @@ public final class ConcurrentInt62Set implements LongSet {
 
             int len = witness.length();
             AtomicLongArray grown = new AtomicLongArray(len << 1);
-            for (int i = 0; i < witness.length(); i++) {
+            for (int i = 0; i < len; i++) {
                 grown.set(i + len, witness.get(i));
             }
             this.values = grown;
