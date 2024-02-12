@@ -415,7 +415,7 @@ public final class ConcurrentInt62Set implements LongSet {
                     this.indexGlobal = 0;
                     this.currentBucketArray = this.buckets[0].values;
                 }
-                if (this.indexGlobal >= this.buckets.length) {
+                if (this.indexGlobal >= this.buckets.length || this.currentBucketArray == null) {
                     return false;
                 }
                 int len = this.currentBucketArray.length();

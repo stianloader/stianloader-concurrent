@@ -96,6 +96,12 @@ public class Int62SetTests {
         }
     }
 
+    @Test
+    public void emptySetTest() {
+        assertTrue(new ConcurrentInt62Set(8).isEmpty());
+        assertFalse(new ConcurrentInt62Set(8).iterator().hasNext());
+    }
+
     @RepeatedTest(value = 4, failureThreshold = 1)
     public void asynchronousSmallInsertAndRemoveTest() {
         LongSet set = new ConcurrentInt62Set(1);

@@ -77,13 +77,11 @@
                 <version>3.3.0</version>
                 <configuration>
                     <archive>
-                        <index>true</index>
                         <manifestEntries>
                             <Multi-Release>false</Multi-Release>
                             <Built-By>${env.USERNAME}</Built-By>
                         </manifestEntries>
                         <addMavenDescriptor>true</addMavenDescriptor>
-                        <compress>true</compress>
                     </archive>
                 </configuration>
             </plugin>
