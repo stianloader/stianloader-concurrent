@@ -88,7 +88,7 @@ import it.unimi.dsi.fastutil.longs.LongSets;
  * a wrapper may be appropriate.</b>
  *
  * <p>This set expects that values are distributed evenly and randomly. More specifically, the bucket for any given value
- * is <code>((value & 0xFFFF) ^ (value >> 32)) & (bucketCount - 1)</code>. This contrasts collections such as
+ * is <code>((value &amp; 0xFFFF) ^ (value &gt;&gt; 32)) &amp; (bucketCount - 1)</code>. This contrasts collections such as
  * {@link ConcurrentHashMap} where the value to bucket mapping appears a bit more random. more specifically, this causes
  * issues when values inserted into the collection are guaranteed to be multiples of 2, 4, 8 or 16 (and further), as
  * the buckets will not be used efficiently, causing lookup and mutation times to increase larger than usually.
