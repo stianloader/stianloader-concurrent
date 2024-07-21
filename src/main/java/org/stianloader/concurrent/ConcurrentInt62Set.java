@@ -1,3 +1,27 @@
+/*
+ * Stianloader-concurrent - A collection of highly specialised concurrent
+ * datastructures written in Java.
+ *
+ * Copyright (C) 2023-2024 Geolykt (stianloader.org)
+ * 
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ * 
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ * 
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE 
+ * SOFTWARE.
+*/
 package org.stianloader.concurrent;
 
 import java.util.Collection;
@@ -14,6 +38,8 @@ import it.unimi.dsi.fastutil.longs.LongSet;
 import it.unimi.dsi.fastutil.longs.LongSets;
 
 /**
+ * <h2>Description</h2>
+ *
  * A concurrent set for 62 bit <b>unsigned</b> integers, that is all integers between 0 and 1L &lt;&lt; 62 - 1
  * (or 0x3FFF_FFFF_FFFF_FFFF). The two remaining bits are used for access control logic.
  * 
@@ -24,6 +50,8 @@ import it.unimi.dsi.fastutil.longs.LongSets;
  * or when {@link #clear()} is invoked. <b>Buckets cannot be shrunk down after expanding to a certain size. Only
  * {@link #clear()} (or discarding the set itself) would cause the allocated memory to be freed. The amount of buckets
  * is defined from the start and cannot be changed later on. For performance reasons, it must be a power of two.</b>
+ *
+ * <h2>Atomicity of method calls</h2>
  *
  * <p>The atomic operations {@link #add(long)}, {@link #remove(long)} and {@link #contains(long)} are the smallest
  * unit from which the set can be altered. All other operations (aside from the iterator) are based on either the
@@ -38,9 +66,12 @@ import it.unimi.dsi.fastutil.longs.LongSets;
  * control over a bucket's internal array. Conversely, once the lock has been acquired, other threads will need to wait
  * until the lock has been relinquished. This behaviour is required in order to guarantee that the effects of
  * {@link #add(long)} and {@link #remove(long)} persist even across a resize. To reduce the likelihood of this occurring,
- * a larger amount of buckets may need to be used. To expand on this it may be beneficial to redistribute the bits
- * of the longs so that the most significant bits are less frequent to occur in a given combination. This is especially
- * beneficial when storing smaller values in the set, as this will necessarily cause some buckets to be empty.
+ * a larger amount of buckets may need to be used. <b>To expand on this it may be beneficial to redistribute the bits
+ * of the longs so that the least significant bits are less frequent to occur in a given combination. This is especially
+ * beneficial when storing values that are aligned (for example address values that might frequently be only multiples
+ * of 4, 8 or another value), as this will necessarily cause some buckets to be empty</b>.
+ *
+ * <h2>Iteration</h2>
  *
  * <p>Multiple iterators are supported at the same time. Furthermore, this set implementation also supports modification
  * of the set without causing the iterators to fail - except if the modification would cause the iterator to be exhausted.
@@ -51,10 +82,18 @@ import it.unimi.dsi.fastutil.longs.LongSets;
  * exhausted. Extreme care should be taken when using Iterators in concurrent environments involving additions to the
  * set coupled with removals.
  *
+ * <h2>Important non-features</h2>
+ *
  * <p><b>This set does not implement {@link #hashCode()} and {@link #equals(Object)}. Should these methods be required nonetheless
  * a wrapper may be appropriate.</b>
  *
- * @author geolykt
+ * <p>This set expects that values are distributed evenly and randomly. More specifically, the bucket for any given value
+ * is <code>((value & 0xFFFF) ^ (value >> 32)) & (bucketCount - 1)</code>. This contrasts collections such as
+ * {@link ConcurrentHashMap} where the value to bucket mapping appears a bit more random. more specifically, this causes
+ * issues when values inserted into the collection are guaranteed to be multiples of 2, 4, 8 or 16 (and further), as
+ * the buckets will not be used efficiently, causing lookup and mutation times to increase larger than usually.
+ *
+ * @author Emeric "geolykt" Werner
  */
 public final class ConcurrentInt62Set implements LongSet {
 
@@ -63,13 +102,13 @@ public final class ConcurrentInt62Set implements LongSet {
 
     private static final long CTRL_BIT_READ = 1L << 63;
     private static final long INT_32_BITS = 0xFFFF_FFFFL;
-    private static final long INT_63_BITS = ~CTRL_BIT_READ;
-    private static final long INT_62_BITS = INT_63_BITS & ~(1L << 62);
+    private static final long INT_63_BITS = ~ConcurrentInt62Set.CTRL_BIT_READ;
+    private static final long INT_62_BITS = ConcurrentInt62Set.INT_63_BITS & ~(1L << 62);
     static final AtomicIntegerFieldUpdater<Bucket> BUCKET_SIZE = AtomicIntegerFieldUpdater.newUpdater(Bucket.class, "size");
     static final AtomicIntegerFieldUpdater<Bucket> BUCKET_CTRL = AtomicIntegerFieldUpdater.newUpdater(Bucket.class, "ctrl");
 
     private static int indexFor(long element, int size) {
-        return (int) ((element & INT_32_BITS) ^ (element >> 32)) & (size - 1);
+        return (int) ((element & ConcurrentInt62Set.INT_32_BITS) ^ (element >> 32)) & (size - 1);
     }
 
     static final class Bucket {
@@ -79,7 +118,7 @@ public final class ConcurrentInt62Set implements LongSet {
 
         private final void lockCtrl() {
             int ctrl;
-            while (!BUCKET_CTRL.compareAndSet(this, ctrl = this.ctrl, -ctrl - 1));
+            while (!ConcurrentInt62Set.BUCKET_CTRL.compareAndSet(this, ctrl = this.ctrl, -ctrl - 1));
             while (this.ctrl != -1) {
                 Thread.yield();
             }
@@ -87,7 +126,7 @@ public final class ConcurrentInt62Set implements LongSet {
 
         private final void decrementCtrl() {
             int ctrl;
-            while (!BUCKET_CTRL.compareAndSet(this, ctrl = this.ctrl, ctrl < 0 ? ctrl + 1 : ctrl - 1));
+            while (!ConcurrentInt62Set.BUCKET_CTRL.compareAndSet(this, ctrl = this.ctrl, ctrl < 0 ? ctrl + 1 : ctrl - 1));
         }
 
         private final void incrementCtrl() {
@@ -96,7 +135,7 @@ public final class ConcurrentInt62Set implements LongSet {
                 while ((ctrl = this.ctrl) < 0) {
                     Thread.yield();
                 }
-            } while (!BUCKET_CTRL.compareAndSet(this, ctrl, ctrl + 1));
+            } while (!ConcurrentInt62Set.BUCKET_CTRL.compareAndSet(this, ctrl, ctrl + 1));
         }
 
         boolean contains(long value) {
@@ -104,7 +143,7 @@ public final class ConcurrentInt62Set implements LongSet {
             if (values == null) {
                 return false;
             }
-            value |= CTRL_BIT_READ;
+            value |= ConcurrentInt62Set.CTRL_BIT_READ;
             int index = values.length();
             while (index-- != 0) {
                 if (values.get(index) == value) {
@@ -124,11 +163,11 @@ public final class ConcurrentInt62Set implements LongSet {
             }
 
 
-            int len = BUCKET_SIZE.incrementAndGet(this);
+            int len = ConcurrentInt62Set.BUCKET_SIZE.incrementAndGet(this);
             if (len >= values.length()) {
                 this.decrementCtrl();
                 this.growValues(values);
-                BUCKET_SIZE.decrementAndGet(this);
+                ConcurrentInt62Set.BUCKET_SIZE.decrementAndGet(this);
                 return this.add(element);
             }
 
@@ -138,11 +177,11 @@ public final class ConcurrentInt62Set implements LongSet {
                 if (storeIndex == -1 && values.compareAndSet(index, 0, element)) {
                     storeIndex = index;
                 } else {
-                    if ((values.get(index) & ~CTRL_BIT_READ) == element) {
+                    if ((values.get(index) & ~ConcurrentInt62Set.CTRL_BIT_READ) == element) {
                         if (storeIndex >= 0) {
                             values.set(storeIndex, 0);
                         }
-                        BUCKET_SIZE.decrementAndGet(this);
+                        ConcurrentInt62Set.BUCKET_SIZE.decrementAndGet(this);
                         this.decrementCtrl();
                         return false;
                     }
@@ -151,7 +190,7 @@ public final class ConcurrentInt62Set implements LongSet {
 
             if (storeIndex >= 0) {
                 if (!values.compareAndSet(storeIndex, element, element | CTRL_BIT_READ)) {
-                    BUCKET_SIZE.decrementAndGet(this);
+                    ConcurrentInt62Set.BUCKET_SIZE.decrementAndGet(this);
                     this.decrementCtrl();
                     throw new AssertionError("Unable to CAS back to read-enabled (but not write-disabled) state.");
                 }
@@ -159,7 +198,7 @@ public final class ConcurrentInt62Set implements LongSet {
                 return true;
             }
 
-            BUCKET_SIZE.decrementAndGet(this);
+            ConcurrentInt62Set.BUCKET_SIZE.decrementAndGet(this);
             this.decrementCtrl();
             return this.add(element);
         }
@@ -175,14 +214,14 @@ public final class ConcurrentInt62Set implements LongSet {
             int index = values.length();
             while (index-- != 0) {
                 long value = values.get(index);
-                if ((value & ~CTRL_BIT_READ) != element) {
+                if ((value & ~ConcurrentInt62Set.CTRL_BIT_READ) != element) {
                     continue;
                 }
                 if (!values.compareAndSet(index, value, 0)) {
                     index++;
                     continue;
                 }
-                BUCKET_SIZE.decrementAndGet(this);
+                ConcurrentInt62Set.BUCKET_SIZE.decrementAndGet(this);
                 this.decrementCtrl();
                 return true;
             }
@@ -208,7 +247,7 @@ public final class ConcurrentInt62Set implements LongSet {
                 grown.set(i + len, witness.get(i));
             }
             this.values = grown;
-            BUCKET_CTRL.incrementAndGet(this);
+            ConcurrentInt62Set.BUCKET_CTRL.incrementAndGet(this);
         }
     }
 
@@ -224,32 +263,24 @@ public final class ConcurrentInt62Set implements LongSet {
     }
 
     public boolean add(long element) {
-        if ((element & ~INT_62_BITS) != 0) {
+        if ((element & ~ConcurrentInt62Set.INT_62_BITS) != 0) {
             throw new IllegalArgumentException("Input element is not a 62-bit unsigned integer: " + element);
         }
         element++;
-        return this.buckets[ConcurrentInt62Set.indexFor(element, bucketCount)].add(element);
+        return this.buckets[ConcurrentInt62Set.indexFor(element, this.bucketCount)].add(element);
     }
 
     public boolean remove(long element) {
-        if ((element & ~INT_62_BITS) != 0) {
+        if ((element & ~ConcurrentInt62Set.INT_62_BITS) != 0) {
             throw new IllegalArgumentException("Input element is not a 62-bit unsigned integer: " + element);
         }
         element++;
-        return this.buckets[ConcurrentInt62Set.indexFor(element, bucketCount)].remove(element);
+        return this.buckets[ConcurrentInt62Set.indexFor(element, this.bucketCount)].remove(element);
     }
 
     public boolean contains(long element) {
-//        Bucket[] buckets = this.buckets;
-//        if (buckets == null) {
-//            return false;
-//        }
-//        int size = buckets.length;
-//        if (size == 0) {
-//            return false;
-//        }
         element++;
-        return buckets[ConcurrentInt62Set.indexFor(element, bucketCount)].contains(element);
+        return this.buckets[ConcurrentInt62Set.indexFor(element, this.bucketCount)].contains(element);
     }
 
     @Override
@@ -419,7 +450,7 @@ public final class ConcurrentInt62Set implements LongSet {
                     return false;
                 }
                 int len = this.currentBucketArray.length();
-                while ((this.currentBucketArray.get(this.indexBucket) & CTRL_BIT_READ) == 0) {
+                while ((this.currentBucketArray.get(this.indexBucket) & ConcurrentInt62Set.CTRL_BIT_READ) == 0) {
                     if (++this.indexBucket == len) {
                         if (++this.indexGlobal >= this.buckets.length) {
                             return false;
@@ -442,7 +473,7 @@ public final class ConcurrentInt62Set implements LongSet {
                 }
 
                 long val = this.currentBucketArray.get(this.indexBucket);
-                while ((val & CTRL_BIT_READ) == 0) {
+                while ((val & ConcurrentInt62Set.CTRL_BIT_READ) == 0) {
                     if (this.hasNext()) {
                         val = this.currentBucketArray.get(this.indexBucket);
                     } else {
@@ -451,7 +482,7 @@ public final class ConcurrentInt62Set implements LongSet {
                 }
 
                 this.lastIdxG = this.indexGlobal;
-                this.lastValue = val &= INT_63_BITS;
+                this.lastValue = val &= ConcurrentInt62Set.INT_63_BITS;
 
                 if (++this.indexBucket == this.currentBucketArray.length()) {
                     this.indexBucket = 0;

@@ -4,11 +4,15 @@ import static org.junit.jupiter.api.AssertionFailureBuilder.assertionFailure;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Phaser;
 import java.util.concurrent.ThreadLocalRandom;
 
 import org.junit.jupiter.api.MethodOrderer.OrderAnnotation;
@@ -25,6 +29,15 @@ import it.unimi.dsi.fastutil.longs.LongSet;
 @TestMethodOrder(OrderAnnotation.class)
 public class Int62SetTests {
 
+    private static final void rangeGuardedRemove(LongSet set, int from, int to) {
+        assert from <= to;
+        while (from != to) {
+            if (!set.remove(from++)) {
+                assertTrue(false, "Guarded removal did not remove object " + (from - 1));
+            }
+        }
+    }
+
     private static final void rangeInsert(LongSet set, int from, int to) {
         assert from <= to;
         while (from != to) {
@@ -37,108 +50,6 @@ public class Int62SetTests {
         while (from != to) {
             set.remove(from++);
         }
-    }
-
-    private static final void rangeGuardedRemove(LongSet set, int from, int to) {
-        assert from <= to;
-        while (from != to) {
-            if (!set.remove(from++)) {
-                assertTrue(false, "Guarded removal did not remove object " + (from - 1));
-            }
-        }
-    }
-
-    @Test
-    @Order(value = -100)
-    public void synchronousLargeInsertionTest() {
-        LongSet set = new ConcurrentInt62Set(1 << 16);
-        for (int i = 0; i < (1 << 10); i++) {
-            assertFalse(set.contains(i), "Contains mismatch before insertion");
-            assertTrue(set.add(i), "Insertion feedback value mismatch");
-            assertTrue(set.contains(i), "Contains mismatch after insertion");
-        }
-        for (int i = 0; i < (1 << 10); i++) {
-            assertTrue(set.contains(i), "Contains mismatch");
-        }
-        assertEquals(1 << 10, set.size(), "Set size mismatch");
-    }
-
-    @Order(value = -110)
-    @RepeatedTest(value = 4, failureThreshold = 1)
-    public void asynchronousSmallInsertionTest() {
-        LongSet set = new ConcurrentInt62Set(1);
-        CompletableFuture<?>[] futures = new CompletableFuture[16];
-        for (int i = 0; i < 16; i++) {
-            final int sect = i;
-            futures[i] = CompletableFuture.runAsync(() -> {
-                rangeInsert(set, sect << 8, (sect + 1) << 8);
-            });
-        }
-        assertDoesNotThrow(() -> {
-            CompletableFuture.allOf(futures).get();
-        });
-        assertEquals(16 << 8, set.size(), "Set size mismatch");
-        assertFalse(set.isEmpty(), "Set should not be empty");
-        {
-            LongIterator it = set.iterator();
-            int size = 0;
-            LongSet witness = new LongOpenHashSet();
-            while (it.hasNext()) {
-                assertTrue(witness.add(it.nextLong()), "Iterator must return unique (non-duplciate) values");
-                size++;
-            }
-            assertEquals(set.size(), size, "Iterated object count must match the set's reported size");
-        }
-        for (long i = 0; i < ((long) 16) << 8; i++) {
-            if (!set.contains(i)) {
-                assertTrue(set.contains(i), "Element should be contained in set: " + i);
-            }
-        }
-    }
-
-    @Test
-    public void emptySetTest() {
-        assertTrue(new ConcurrentInt62Set(8).isEmpty());
-        assertFalse(new ConcurrentInt62Set(8).iterator().hasNext());
-    }
-
-    @RepeatedTest(value = 4, failureThreshold = 1)
-    public void asynchronousSmallInsertAndRemoveTest() {
-        LongSet set = new ConcurrentInt62Set(1);
-        CompletableFuture<?>[] futures = new CompletableFuture[16];
-        for (int i = 0; i < 16; i++) {
-            final int sect = i;
-            futures[i] = CompletableFuture.runAsync(() -> {
-                rangeInsert(set, sect << 8, (sect + 1) << 8);
-            });
-        }
-        assertDoesNotThrow(() -> {
-            CompletableFuture.allOf(futures).get();
-        });
-        assertEquals(16 << 8, set.size(), "Set size mismatch");
-        assertFalse(set.isEmpty(), "Set should not be empty");
-        {
-            LongIterator it = set.iterator();
-            int size = 0;
-            LongSet witness = new LongOpenHashSet();
-            while (it.hasNext()) {
-                assertTrue(witness.add(it.nextLong()), "Iterator must return unique (non-duplciate) values");
-                size++;
-            }
-            assertEquals(set.size(), size, "Iterated object count must match the set's reported size");
-        }
-        for (int i = 0; i < 16; i++) {
-            final int sect = i;
-            futures[i] = CompletableFuture.runAsync(() -> {
-                rangeGuardedRemove(set, sect << 8, (sect + 1) << 8);
-            });
-        }
-        assertDoesNotThrow(() -> {
-            CompletableFuture.allOf(futures).get();
-        });
-        assertEquals(0, set.size(), "Set size expected empty");
-        assertTrue(set.isEmpty(), "Set should be empty");
-        assertFalse(set.iterator().hasNext(), "Iterator expected to not indicate a next element for an empty set.");
     }
 
     @Test
@@ -188,6 +99,116 @@ public class Int62SetTests {
         assertTrue(set.isEmpty(), "Set should be empty");
     }
 
+    @RepeatedTest(value = 4, failureThreshold = 1)
+    public void asynchronousSmallInsertAndRemoveTest() {
+        LongSet set = new ConcurrentInt62Set(1);
+        CompletableFuture<?>[] futures = new CompletableFuture[16];
+        for (int i = 0; i < 16; i++) {
+            final int sect = i;
+            futures[i] = CompletableFuture.runAsync(() -> {
+                rangeInsert(set, sect << 8, (sect + 1) << 8);
+            });
+        }
+        assertDoesNotThrow(() -> {
+            CompletableFuture.allOf(futures).get();
+        });
+        assertEquals(16 << 8, set.size(), "Set size mismatch");
+        assertFalse(set.isEmpty(), "Set should not be empty");
+        {
+            LongIterator it = set.iterator();
+            int size = 0;
+            LongSet witness = new LongOpenHashSet();
+            while (it.hasNext()) {
+                assertTrue(witness.add(it.nextLong()), "Iterator must return unique (non-duplciate) values");
+                size++;
+            }
+            assertEquals(set.size(), size, "Iterated object count must match the set's reported size");
+        }
+        for (int i = 0; i < 16; i++) {
+            final int sect = i;
+            futures[i] = CompletableFuture.runAsync(() -> {
+                rangeGuardedRemove(set, sect << 8, (sect + 1) << 8);
+            });
+        }
+        assertDoesNotThrow(() -> {
+            CompletableFuture.allOf(futures).get();
+        });
+        assertEquals(0, set.size(), "Set size expected empty");
+        assertTrue(set.isEmpty(), "Set should be empty");
+        assertFalse(set.iterator().hasNext(), "Iterator expected to not indicate a next element for an empty set.");
+    }
+
+    @Order(value = -110)
+    @RepeatedTest(value = 4, failureThreshold = 1)
+    public void asynchronousSmallInsertionTest() {
+        LongSet set = new ConcurrentInt62Set(1);
+        CompletableFuture<?>[] futures = new CompletableFuture[16];
+        for (int i = 0; i < 16; i++) {
+            final int sect = i;
+            futures[i] = CompletableFuture.runAsync(() -> {
+                rangeInsert(set, sect << 8, (sect + 1) << 8);
+            });
+        }
+        assertDoesNotThrow(() -> {
+            CompletableFuture.allOf(futures).get();
+        });
+        assertEquals(16 << 8, set.size(), "Set size mismatch");
+        assertFalse(set.isEmpty(), "Set should not be empty");
+        {
+            LongIterator it = set.iterator();
+            int size = 0;
+            LongSet witness = new LongOpenHashSet();
+            while (it.hasNext()) {
+                assertTrue(witness.add(it.nextLong()), "Iterator must return unique (non-duplciate) values");
+                size++;
+            }
+            assertEquals(set.size(), size, "Iterated object count must match the set's reported size");
+        }
+        for (long i = 0; i < ((long) 16) << 8; i++) {
+            if (!set.contains(i)) {
+                assertTrue(set.contains(i), "Element should be contained in set: " + i);
+            }
+        }
+    }
+
+    @Test
+    @Order(value = -120)
+    public void concurrentDuplicateInsertionTest() {
+        LongSet set = new ConcurrentInt62Set(2);
+
+        for (int i = 0; i < 1024; i++) {
+            CountDownLatch completionCounter = new CountDownLatch(16);
+            Phaser phaser = new Phaser(17);
+
+            final int value = i;
+            for (int j = 0; j < 16; j++) {
+                new Thread(() -> {
+                    phaser.arriveAndAwaitAdvance();
+                    set.add(value);
+                    completionCounter.countDown();
+                }).start();
+            }
+
+            assertTimeoutPreemptively(Duration.ofSeconds(5), () -> {
+                phaser.arriveAndAwaitAdvance();
+                completionCounter.await();
+                LongSet indexer = new LongOpenHashSet();
+                LongIterator it = set.longIterator();
+                while (it.hasNext()) {
+                    long iteratorValue = it.nextLong();
+
+                    assertTrue(indexer.add(iteratorValue), "Duplicate value " + iteratorValue + " when concurrently adding " + value);
+                }
+            });
+        }
+    }
+
+    @Test
+    public void emptySetTest() {
+        assertTrue(new ConcurrentInt62Set(8).isEmpty());
+        assertFalse(new ConcurrentInt62Set(8).iterator().hasNext());
+    }
+
     @Test
     public void synchronousContainsTest() {
         LongSet set = new ConcurrentInt62Set(8);
@@ -233,6 +254,33 @@ public class Int62SetTests {
     }
 
     @Test
+    public void synchronousIterationAndInsertTest() {
+        LongSet set = new ConcurrentInt62Set(1);
+        LongSet[] witnesses = new LongSet[1000];
+        LongIterator[] iterators = new LongIterator[1000];
+
+        for (int i = 0; i < 1000; i++) {
+            set.add(i);
+            witnesses[i] = new LongOpenHashSet();
+            iterators[i] = set.iterator();
+            for (int j = 0; j <= i; j++) {
+                if (iterators[j].hasNext()) {
+                    long value = iterators[j].nextLong();
+                    if (!witnesses[j].add(value)) {
+                        assertTrue(false, "Did not expect duplicate element '" + value + "' in iterator '" + j + "' after adding '" + i + "'. All values previously returned by the iterator: " + witnesses[j]);
+                    }
+                    assertFalse(set.add(value), "Insertion of a value returned by an iterator into the set should not succeed.");
+                }
+            }
+        }
+
+        assertFalse(iterators[0].hasNext(), "First iterator should be exhausted by now.");
+        assertFalse(iterators[0].hasNext(), "Exhausted should stay exhausted.");
+        // Hint: Due to behaviour of the Iterator, the second iterator should also be exhausted,
+        // but as this is not in the specification this information is virtually irrelevant.
+    }
+
+    @Test
     public void synchronousIterationTest() {
         LongSet set = new ConcurrentInt62Set(8);
         for (int i = 0; i < 10000; i++) {
@@ -258,6 +306,21 @@ public class Int62SetTests {
                     .buildAndThrow();
             }
         }
+    }
+
+    @Test
+    @Order(value = -100)
+    public void synchronousLargeInsertionTest() {
+        LongSet set = new ConcurrentInt62Set(1 << 16);
+        for (int i = 0; i < (1 << 10); i++) {
+            assertFalse(set.contains(i), "Contains mismatch before insertion");
+            assertTrue(set.add(i), "Insertion feedback value mismatch");
+            assertTrue(set.contains(i), "Contains mismatch after insertion");
+        }
+        for (int i = 0; i < (1 << 10); i++) {
+            assertTrue(set.contains(i), "Contains mismatch");
+        }
+        assertEquals(1 << 10, set.size(), "Set size mismatch");
     }
 
     @Test
@@ -332,32 +395,5 @@ public class Int62SetTests {
                     .buildAndThrow();
             }
         }
-    }
-
-    @Test
-    public void synchronousIterationAndInsertTest() {
-        LongSet set = new ConcurrentInt62Set(1);
-        LongSet[] witnesses = new LongSet[1000];
-        LongIterator[] iterators = new LongIterator[1000];
-
-        for (int i = 0; i < 1000; i++) {
-            set.add(i);
-            witnesses[i] = new LongOpenHashSet();
-            iterators[i] = set.iterator();
-            for (int j = 0; j <= i; j++) {
-                if (iterators[j].hasNext()) {
-                    long value = iterators[j].nextLong();
-                    if (!witnesses[j].add(value)) {
-                        assertTrue(false, "Did not expect duplicate element '" + value + "' in iterator '" + j + "' after adding '" + i + "'. All values previously returned by the iterator: " + witnesses[j]);
-                    }
-                    assertFalse(set.add(value), "Insertion of a value returned by an iterator into the set should not succeed.");
-                }
-            }
-        }
-
-        assertFalse(iterators[0].hasNext(), "First iterator should be exhausted by now.");
-        assertFalse(iterators[0].hasNext(), "Exhausted should stay exhausted.");
-        // Hint: Due to behaviour of the Iterator, the second iterator should also be exhausted,
-        // but as this is not in the specification this information is virtually irrelevant.
     }
 }

@@ -2,6 +2,9 @@
 
 An assortment of highly-specialized structures for use in a concurrent environment.
 
+The documentation for this project is viewable online
+(https://stianloader.org/jd/org.stianloader/stianloader-concurrent/%5B0.1.0-a0,0.1.1-a0%5D/)[here].
+
 ## Why not use ConcurrentHashMap?
 
 Many of the data structures implemented in this library could easily be replaced by ConcurrentHashMap,
